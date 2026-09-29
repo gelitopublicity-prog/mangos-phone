@@ -5,9 +5,11 @@
   var GVIZ_URL = "https://docs.google.com/spreadsheets/d/" + SPREADSHEET_ID + "/gviz/tq?tqx=out:json";
   var WHATSAPP_NUMBER = "584248516883";
   var MAX_FEATURED = 4;
+  var CART_STORAGE_KEY = "mangos_phone_cart_v1";
 
   var productos = [];
   var currentCategory = "Todos";
+  var currentModel = "";
   var currentSearch = "";
   var cart = [];
 
@@ -66,8 +68,7 @@
     "iPhone 14","iPhone 14 Pro","iPhone 14 Pro Max",
     "iPhone 15","iPhone 15 Pro","iPhone 15 Pro Max",
     "iPhone 16","iPhone 16 Pro","iPhone 16 Pro Max",
-    "iPhone 17","iPhone 17 Pro","iPhone 17 Pro Max",
-    "Otro / Consultar"
+    "iPhone 17","iPhone 17 Pro","iPhone 17 Pro Max"
   ];
 
   function expandModels(raw) {
@@ -85,6 +86,47 @@
       }
     });
     return result.length ? result : ["Todos los modelos"];
+  }
+
+  function guardarCarrito() {
+    try { localStorage.setItem(CART_STORAGE_KEY, JSON.stringify(cart)); } catch (e) {}
+  }
+  function cargarCarrito() {
+    try {
+      var raw = localStorage.getItem(CART_STORAGE_KEY);
+      if (!raw) return;
+      var parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        cart = parsed.filter(function (item) {
+          return item && item.key && item.nombre && item.precio > 0 && item.qty > 0;
+        });
+      }
+    } catch (e) { cart = []; }
+  }
+
+  function poblarModelFilter() {
+    var select = document.getElementById("modelFilter");
+    if (!select) return;
+    var modelosDisponibles = {};
+    productos.forEach(function (p) {
+      var modelos = expandModels(p.iphone_compatibles);
+      if (modelos.indexOf("Todos los modelos") !== -1) {
+        ALL_MODELS.forEach(function (m) { modelosDisponibles[m] = true; });
+      } else {
+        modelos.forEach(function (m) { modelosDisponibles[m] = true; });
+      }
+    });
+    var lista = Object.keys(modelosDisponibles).sort(function (a, b) {
+      var numA = parseInt(a.match(/\d+/), 10);
+      var numB = parseInt(b.match(/\d+/), 10);
+      if (numA !== numB) return numB - numA;
+      return a.localeCompare(b);
+    });
+    var html = '<option value="">Todos los modelos</option>';
+    lista.forEach(function (m) {
+      html += '<option value="' + escapeHtml(m) + '">' + escapeHtml(m) + '</option>';
+    });
+    select.innerHTML = html;
   }
 
   function productCardHtml(p, featured) {
@@ -175,6 +217,8 @@
           grid.innerHTML = '<div class="state-msg"><i class="fas fa-box-open"></i><p>No hay productos disponibles.</p></div>';
           return;
         }
+
+        poblarModelFilter();
         renderDestacados();
         renderCatalogo();
       })
@@ -203,11 +247,17 @@
     var filtered = productos.filter(function (p) {
       var cat = currentCategory.toLowerCase();
       var matchCat = currentCategory === "Todos" || p.categoria.toLowerCase().indexOf(cat) !== -1;
+      var matchModel = true;
+      if (currentModel) {
+        var modelos = expandModels(p.iphone_compatibles);
+        if (modelos.indexOf("Todos los modelos") !== -1) matchModel = true;
+        else matchModel = modelos.indexOf(currentModel) !== -1;
+      }
       var matchSearch = currentSearch === "" ||
         p.nombre.toLowerCase().indexOf(currentSearch) !== -1 ||
         p.categoria.toLowerCase().indexOf(currentSearch) !== -1 ||
         p.iphone_compatibles.toLowerCase().indexOf(currentSearch) !== -1;
-      return matchCat && matchSearch;
+      return matchCat && matchModel && matchSearch;
     });
     if (filtered.length === 0) {
       grid.innerHTML = '<div class="state-msg"><i class="fas fa-box-open"></i><p>No hay productos que coincidan.</p></div>';
@@ -222,28 +272,19 @@
       if (productos[i].nombre === nombre) { prod = productos[i]; break; }
     }
     var imgUrl = prod ? (prod.imagen_url || "") : "";
-
     var key = nombre + "__" + modelo;
     var existing = null;
     for (var j = 0; j < cart.length; j++) if (cart[j].key === key) { existing = cart[j]; break; }
-    if (existing) {
-      existing.qty += qty;
-    } else {
-      cart.push({
-        key: key,
-        nombre: nombre,
-        precio: precio,
-        modelo: modelo,
-        qty: qty,
-        imagen_url: imgUrl
-      });
-    }
+    if (existing) existing.qty += qty;
+    else cart.push({ key: key, nombre: nombre, precio: precio, modelo: modelo, qty: qty, imagen_url: imgUrl });
+    guardarCarrito();
     updateCartUI();
     openCart();
   }
 
   function removeFromCart(key) {
     cart = cart.filter(function (i) { return i.key !== key; });
+    guardarCarrito();
     updateCartUI();
   }
 
@@ -252,7 +293,8 @@
     for (var i = 0; i < cart.length; i++) if (cart[i].key === key) { item = cart[i]; break; }
     if (!item) return;
     item.qty += delta;
-    if (item.qty <= 0) removeFromCart(key); else updateCartUI();
+    if (item.qty <= 0) removeFromCart(key);
+    else { guardarCarrito(); updateCartUI(); }
   }
 
   function getCartTotal() { return cart.reduce(function (s, i) { return s + i.precio * i.qty; }, 0); }
@@ -264,23 +306,17 @@
     var countEl = document.getElementById("cartCount");
     var checkoutBtn = document.getElementById("checkoutBtn");
     if (!body || !totalEl || !countEl || !checkoutBtn) return;
-
     countEl.textContent = getCartCount();
     totalEl.textContent = formatPrice(getCartTotal());
-
     if (cart.length === 0) {
       body.innerHTML = '<div class="cart-empty"><i class="fas fa-shopping-basket"></i>Tu carrito está vacío.<br>¡Agrega tus accesorios favoritos!</div>';
       checkoutBtn.disabled = true;
       return;
     }
-
     body.innerHTML = cart.map(function (item) {
       var imgSrc = item.imagen_url || "https://via.placeholder.com/200x200/ffffff/ff9900?text=MP";
       return '<div class="cart-item">' +
-        '<div class="cart-item-img">' +
-          '<img src="' + escapeHtml(imgSrc) + '" alt="' + escapeHtml(item.nombre) + '" ' +
-            'onerror="this.onerror=null; this.src=\'https://via.placeholder.com/200x200/ffffff/ff9900?text=MP\';" />' +
-        '</div>' +
+        '<div class="cart-item-img"><img src="' + escapeHtml(imgSrc) + '" alt="' + escapeHtml(item.nombre) + '" onerror="this.onerror=null; this.src=\'https://via.placeholder.com/200x200/ffffff/ff9900?text=MP\';" /></div>' +
         '<div class="cart-item-info">' +
           '<h4>' + escapeHtml(item.nombre) + '</h4>' +
           '<div class="meta"><i class="fas fa-mobile-screen-button"></i> ' + escapeHtml(item.modelo) + '</div>' +
@@ -292,13 +328,10 @@
             '</div>' +
             '<strong>' + formatPrice(item.precio * item.qty) + '</strong>' +
           '</div>' +
-          '<button class="cart-remove" data-action="remove" data-key="' + escapeHtml(item.key) + '">' +
-            '<i class="fas fa-trash-alt"></i> Eliminar' +
-          '</button>' +
+          '<button class="cart-remove" data-action="remove" data-key="' + escapeHtml(item.key) + '"><i class="fas fa-trash-alt"></i> Eliminar</button>' +
         '</div>' +
       '</div>';
     }).join("");
-
     checkoutBtn.disabled = false;
   }
 
@@ -346,34 +379,20 @@
   function abrirModal(producto) {
     if (!modalOverlay || !producto) return;
     currentModalProduct = producto;
-
     modalImg.src = producto.imagen_url || "https://via.placeholder.com/600x600/ffffff/ff9900?text=Mangos+Phone";
     modalImg.alt = producto.nombre;
-    modalImg.onerror = function () {
-      this.onerror = null;
-      this.src = "https://via.placeholder.com/600x600/ffffff/ff9900?text=Mangos+Phone";
-    };
-
+    modalImg.onerror = function () { this.onerror = null; this.src = "https://via.placeholder.com/600x600/ffffff/ff9900?text=Mangos+Phone"; };
     modalName.textContent = producto.nombre;
     modalCategory.textContent = producto.categoria;
     modalPrice.innerHTML = formatPrice(producto.precio) + ' <small>USD</small>';
-
     var modelos = expandModels(producto.iphone_compatibles);
     var modelsToRender = modelos.indexOf("Todos los modelos") !== -1 ? ALL_MODELS : modelos;
-    modalCompatList.innerHTML = modelsToRender.map(function (m) {
-      return '<li>' + escapeHtml(m) + '</li>';
-    }).join("");
-
-    modalModelSelect.innerHTML = modelsToRender.map(function (m) {
-      return '<option value="' + escapeHtml(m) + '">' + escapeHtml(m) + '</option>';
-    }).join("");
-
+    modalCompatList.innerHTML = modelsToRender.map(function (m) { return '<li>' + escapeHtml(m) + '</li>'; }).join("");
+    modalModelSelect.innerHTML = modelsToRender.map(function (m) { return '<option value="' + escapeHtml(m) + '">' + escapeHtml(m) + '</option>'; }).join("");
     modalQtyInput.value = 1;
-
     modalAddBtn.innerHTML = '<i class="fas fa-cart-plus"></i> Añadir a la cesta';
     modalAddBtn.style.background = "";
     modalAddBtn.style.color = "";
-
     modalOverlay.classList.add("open");
     document.body.style.overflow = "hidden";
   }
@@ -392,24 +411,16 @@
     if (e.target.closest("select")) return;
     if (e.target.closest("input")) return;
     if (e.target.closest("button")) return;
-
     var nameEl = card.querySelector(".product-name");
     if (!nameEl) return;
     var nombre = nameEl.textContent.trim();
-
     var producto = null;
-    for (var i = 0; i < productos.length; i++) {
-      if (productos[i].nombre === nombre) { producto = productos[i]; break; }
-    }
+    for (var i = 0; i < productos.length; i++) if (productos[i].nombre === nombre) { producto = productos[i]; break; }
     if (producto) abrirModal(producto);
   });
 
   if (modalClose) modalClose.addEventListener("click", cerrarModal);
-  if (modalOverlay) {
-    modalOverlay.addEventListener("click", function (e) {
-      if (e.target === modalOverlay) cerrarModal();
-    });
-  }
+  if (modalOverlay) modalOverlay.addEventListener("click", function (e) { if (e.target === modalOverlay) cerrarModal(); });
 
   if (modalAddBtn) {
     modalAddBtn.addEventListener("click", function () {
@@ -484,6 +495,14 @@
       });
     }
 
+    var modelFilterEl = document.getElementById("modelFilter");
+    if (modelFilterEl) {
+      modelFilterEl.addEventListener("change", function (e) {
+        currentModel = e.target.value || "";
+        renderCatalogo();
+      });
+    }
+
     var searchEl = document.getElementById("searchInput");
     if (searchEl) {
       var t;
@@ -505,6 +524,7 @@
 
   function init() {
     try {
+      cargarCarrito();
       bindEvents();
       updateCartUI();
       cargarProductos();
