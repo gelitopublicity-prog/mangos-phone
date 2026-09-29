@@ -328,4 +328,193 @@
       msg += "   • Subtotal: " + formatPrice(item.precio * item.qty) + "\n\n";
     });
     msg += "━━━━━━━━━━━━━━━\n*TOTAL: " + formatPrice(getCartTotal()) + " USD*\n━━━━━━━━━━━━━━━\n\nPor favor confirmar disponibilidad. ¡Gracias!";
-    window.open("https://wa.me/" + WHATSAPP_NUMBER + "?text=" + encode
+    window.open("https://wa.me/" + WHATSAPP_NUMBER + "?text=" + encodeURIComponent(msg), "_blank");
+  }
+
+  var modalOverlay = document.getElementById("modalOverlay");
+  var modalClose = document.getElementById("modalClose");
+  var modalImg = document.getElementById("modalImg");
+  var modalName = document.getElementById("modalName");
+  var modalCategory = document.getElementById("modalCategory");
+  var modalPrice = document.getElementById("modalPrice");
+  var modalCompatList = document.getElementById("modalCompatList");
+  var modalModelSelect = document.getElementById("modalModelSelect");
+  var modalQtyInput = document.getElementById("modalQtyInput");
+  var modalAddBtn = document.getElementById("modalAddBtn");
+  var currentModalProduct = null;
+
+  function abrirModal(producto) {
+    if (!modalOverlay || !producto) return;
+    currentModalProduct = producto;
+
+    modalImg.src = producto.imagen_url || "https://via.placeholder.com/600x600/ffffff/ff9900?text=Mangos+Phone";
+    modalImg.alt = producto.nombre;
+    modalImg.onerror = function () {
+      this.onerror = null;
+      this.src = "https://via.placeholder.com/600x600/ffffff/ff9900?text=Mangos+Phone";
+    };
+
+    modalName.textContent = producto.nombre;
+    modalCategory.textContent = producto.categoria;
+    modalPrice.innerHTML = formatPrice(producto.precio) + ' <small>USD</small>';
+
+    var modelos = expandModels(producto.iphone_compatibles);
+    var modelsToRender = modelos.indexOf("Todos los modelos") !== -1 ? ALL_MODELS : modelos;
+    modalCompatList.innerHTML = modelsToRender.map(function (m) {
+      return '<li>' + escapeHtml(m) + '</li>';
+    }).join("");
+
+    modalModelSelect.innerHTML = modelsToRender.map(function (m) {
+      return '<option value="' + escapeHtml(m) + '">' + escapeHtml(m) + '</option>';
+    }).join("");
+
+    modalQtyInput.value = 1;
+
+    modalAddBtn.innerHTML = '<i class="fas fa-cart-plus"></i> Añadir a la cesta';
+    modalAddBtn.style.background = "";
+    modalAddBtn.style.color = "";
+
+    modalOverlay.classList.add("open");
+    document.body.style.overflow = "hidden";
+  }
+
+  function cerrarModal() {
+    if (!modalOverlay) return;
+    modalOverlay.classList.remove("open");
+    document.body.style.overflow = "";
+    currentModalProduct = null;
+  }
+
+  document.body.addEventListener("click", function (e) {
+    var card = e.target.closest ? e.target.closest(".product-card") : null;
+    if (!card) return;
+    if (e.target.closest(".btn-add-cart")) return;
+    if (e.target.closest("select")) return;
+    if (e.target.closest("input")) return;
+    if (e.target.closest("button")) return;
+
+    var nameEl = card.querySelector(".product-name");
+    if (!nameEl) return;
+    var nombre = nameEl.textContent.trim();
+
+    var producto = null;
+    for (var i = 0; i < productos.length; i++) {
+      if (productos[i].nombre === nombre) { producto = productos[i]; break; }
+    }
+    if (producto) abrirModal(producto);
+  });
+
+  if (modalClose) modalClose.addEventListener("click", cerrarModal);
+  if (modalOverlay) {
+    modalOverlay.addEventListener("click", function (e) {
+      if (e.target === modalOverlay) cerrarModal();
+    });
+  }
+
+  if (modalAddBtn) {
+    modalAddBtn.addEventListener("click", function () {
+      if (!currentModalProduct) return;
+      var modelo = modalModelSelect.value;
+      var qty = parseInt(modalQtyInput.value, 10) || 1;
+      addToCart(currentModalProduct.nombre, currentModalProduct.precio, modelo, qty);
+      var orig = modalAddBtn.innerHTML;
+      modalAddBtn.innerHTML = '<i class="fas fa-check"></i> Añadido';
+      modalAddBtn.style.background = "#25D366";
+      modalAddBtn.style.color = "#fff";
+      setTimeout(function () {
+        modalAddBtn.innerHTML = orig;
+        modalAddBtn.style.background = "";
+        modalAddBtn.style.color = "";
+      }, 1100);
+    });
+  }
+
+  function bindEvents() {
+    var openBtn = document.getElementById("openCart");
+    var closeBtn = document.getElementById("closeCart");
+    var overlay = document.getElementById("cartOverlay");
+    var checkoutBtn = document.getElementById("checkoutBtn");
+    if (openBtn) openBtn.addEventListener("click", openCart);
+    if (closeBtn) closeBtn.addEventListener("click", closeCart);
+    if (overlay) overlay.addEventListener("click", closeCart);
+    if (checkoutBtn) checkoutBtn.addEventListener("click", checkoutWhatsApp);
+
+    document.body.addEventListener("click", function (e) {
+      var addBtn = e.target.closest ? e.target.closest(".btn-add-cart") : null;
+      if (addBtn) {
+        var card = addBtn.closest(".product-card");
+        if (!card) return;
+        var name = addBtn.getAttribute("data-name");
+        var price = parseFloat(addBtn.getAttribute("data-price")) || 0;
+        var modelSelect = card.querySelector(".model-select");
+        var qtyInput = card.querySelector(".qty-input");
+        var model = modelSelect ? modelSelect.value : "Único";
+        var qty = qtyInput ? (parseInt(qtyInput.value, 10) || 1) : 1;
+        addToCart(name, price, model, qty);
+        var orig = addBtn.innerHTML;
+        addBtn.innerHTML = '<i class="fas fa-check"></i> Añadido';
+        addBtn.style.background = "#25D366";
+        addBtn.style.color = "#fff";
+        setTimeout(function () {
+          addBtn.innerHTML = orig;
+          addBtn.style.background = "";
+          addBtn.style.color = "";
+        }, 1100);
+        return;
+      }
+      var ctrlBtn = e.target.closest ? e.target.closest("button[data-action]") : null;
+      if (ctrlBtn) {
+        var action = ctrlBtn.getAttribute("data-action");
+        var key = ctrlBtn.getAttribute("data-key");
+        if (action === "inc") changeQty(key, 1);
+        else if (action === "dec") changeQty(key, -1);
+        else if (action === "remove") removeFromCart(key);
+      }
+    });
+
+    var filtersEl = document.getElementById("filters");
+    if (filtersEl) {
+      filtersEl.addEventListener("click", function (e) {
+        var btn = e.target.closest ? e.target.closest(".filter-btn") : null;
+        if (!btn) return;
+        document.querySelectorAll(".filter-btn").forEach(function (b) { b.classList.remove("active"); });
+        btn.classList.add("active");
+        currentCategory = btn.getAttribute("data-category") || "Todos";
+        renderCatalogo();
+      });
+    }
+
+    var searchEl = document.getElementById("searchInput");
+    if (searchEl) {
+      var t;
+      searchEl.addEventListener("input", function (e) {
+        clearTimeout(t);
+        t = setTimeout(function () {
+          currentSearch = e.target.value.trim().toLowerCase();
+          renderCatalogo();
+        }, 180);
+      });
+    }
+    document.addEventListener("keydown", function (e) {
+      if (e.key === "Escape") {
+        if (modalOverlay && modalOverlay.classList.contains("open")) cerrarModal();
+        else closeCart();
+      }
+    });
+  }
+
+  function init() {
+    try {
+      bindEvents();
+      updateCartUI();
+      cargarProductos();
+    } catch (e) {
+      console.error("Error init:", e);
+      var grid = document.getElementById("productsGrid");
+      if (grid) grid.innerHTML = '<div class="state-msg"><p>Error al inicializar. Recarga.</p></div>';
+    }
+  }
+
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init);
+  else init();
+})();
